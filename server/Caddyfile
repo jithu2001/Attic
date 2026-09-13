@@ -1,0 +1,30 @@
+# Reverse proxy in front of the Attic app.
+#
+# TLS uses the certificate pair produced on the host by:
+#   tailscale cert --cert-file certs/attic.crt --key-file certs/attic.key <hostname>
+# Tailscale's own CA is trusted by every device on the tailnet, so no public
+# ACME challenge is needed and the server never has to be publicly reachable.
+
+{
+	admin off
+	auto_https off
+}
+
+{$ATTIC_HOSTNAME}:443 {
+	tls /certs/attic.crt /certs/attic.key
+
+	encode zstd gzip
+
+	# Media responses are large and range-requested; never buffer them.
+	reverse_proxy app:8080 {
+		flush_interval -1
+		header_up X-Forwarded-Proto {scheme}
+	}
+}
+
+# Plain HTTP inside the tailnet, for clients that have not been given the cert.
+:80 {
+	reverse_proxy app:8080 {
+		flush_interval -1
+	}
+}
