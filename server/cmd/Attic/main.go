@@ -1,89 +1,78 @@
 // Command Attic is the single Attic server binary: API, scanner, background
 // jobs and media streaming in one modular monolith.
+//
+// Usage:
+//
+//	attic                      run the server
+//	attic serve                run the server
+//	attic adduser <username>   create an account
+//	attic -healthcheck         probe a running server (used by the container)
 package main
 
 import (
-	"context"
-	"errors"
-	"flag"
 	"fmt"
 	"net/http"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
-
-	"github.com/perleybrook/attic/server/internal/api"
-	"github.com/perleybrook/attic/server/internal/config"
 )
 
 func main() {
+	args := os.Args[1:]
+
 	// -healthcheck lets the container image probe itself without shipping
 	// curl in the runtime layer (see Dockerfile HEALTHCHECK).
-	healthcheck := flag.Bool("healthcheck", false, "probe the local /healthz endpoint and exit")
-	flag.Parse()
-
-	if *healthcheck {
+	if len(args) == 1 && (args[0] == "-healthcheck" || args[0] == "--healthcheck") {
 		if err := probeHealth(); err != nil {
-			os.Stderr.WriteString("unhealthy: " + err.Error() + "\n")
-			os.Exit(1)
+			fail("unhealthy: " + err.Error())
 		}
 		return
 	}
 
-	if err := run(); err != nil {
-		// The logger may not exist yet if config failed, so use stderr.
-		os.Stderr.WriteString("fatal: " + err.Error() + "\n")
-		os.Exit(1)
+	var (
+		command string
+		rest    []string
+	)
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		command, rest = args[0], args[1:]
+	} else {
+		command, rest = "serve", args
+	}
+
+	var err error
+	switch command {
+	case "serve":
+		err = runServer(rest)
+	case "adduser":
+		err = runAddUser(rest)
+	case "help", "-h", "--help":
+		usage()
+		return
+	default:
+		usage()
+		fail("unknown command " + command)
+	}
+
+	if err != nil {
+		fail(err.Error())
 	}
 }
 
-func run() error {
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	log := cfg.Logger()
-	log.Info("starting Attic",
-		"version", api.Version,
-		"listen_addr", cfg.ListenAddr,
-		"data_dir", cfg.DataDir,
-		"library_roots", cfg.LibraryRoots,
-	)
+func usage() {
+	fmt.Fprint(os.Stderr, `Attic — self-hosted photos, music and video.
 
-	srv := &http.Server{
-		Addr:              cfg.ListenAddr,
-		Handler:           api.NewServer(cfg, log),
-		ReadHeaderTimeout: 10 * time.Second,
-		// No WriteTimeout: media streaming responses are long-lived.
-		IdleTimeout: 120 * time.Second,
-	}
+Usage:
+  attic [serve]              run the server
+  attic adduser <username>   create an account (prompts for a password)
+  attic -healthcheck         probe a running server
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+Configuration comes from the environment; see .env.example.
+`)
+}
 
-	errCh := make(chan error, 1)
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-		}
-	}()
-
-	select {
-	case err := <-errCh:
-		return err
-	case <-ctx.Done():
-		log.Info("shutdown signal received, draining connections")
-	}
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return err
-	}
-	log.Info("stopped cleanly")
-	return nil
+func fail(message string) {
+	fmt.Fprintln(os.Stderr, "attic: "+message)
+	os.Exit(1)
 }
 
 // probeHealth performs a local GET /healthz, used by the container healthcheck.

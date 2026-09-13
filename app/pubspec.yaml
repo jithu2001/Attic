@@ -22,6 +22,12 @@ dependencies:
   cached_network_image: ^3.3.1
   animations: ^2.0.11
 
+  # Playback
+  just_audio: ^0.9.38
+  audio_service: ^0.18.13
+  audio_session: ^0.1.19
+  rxdart: ^0.28.0
+
   # Storage
   flutter_secure_storage: ^9.2.2
   shared_preferences: ^2.2.3

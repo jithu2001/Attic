@@ -24,8 +24,11 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.AccessTokenTTL != 15*time.Minute {
 		t.Errorf("AccessTokenTTL = %v, want 15m", cfg.AccessTokenTTL)
 	}
-	if len(cfg.LibraryRoots) != 1 || cfg.LibraryRoots[0] != "/data/originals" {
-		t.Errorf("LibraryRoots = %v", cfg.LibraryRoots)
+	if len(cfg.LibraryRoots) != 2 || cfg.LibraryRoots[0] != "/data/originals" || cfg.LibraryRoots[1] != "/data/music" {
+		t.Errorf("LibraryRoots = %v, want [/data/originals /data/music]", cfg.LibraryRoots)
+	}
+	if cfg.MusicDir != "/data/music" {
+		t.Errorf("MusicDir = %q", cfg.MusicDir)
 	}
 }
 
@@ -62,6 +65,7 @@ func TestLoadRequiresStrongSecret(t *testing.T) {
 func TestEnvListSplitsAndTrims(t *testing.T) {
 	t.Setenv("ATTIC_JWT_SECRET", testSecret)
 	t.Setenv("ATTIC_LIBRARY_ROOTS", " /mnt/photos , /mnt/video ,, ")
+	t.Setenv("ATTIC_MUSIC_DIR", "/mnt/video")
 
 	cfg, err := Load()
 	if err != nil {
@@ -88,5 +92,41 @@ func TestEnvDurationFallsBackOnGarbage(t *testing.T) {
 	}
 	if cfg.AccessTokenTTL != 15*time.Minute {
 		t.Errorf("AccessTokenTTL = %v, want the 15m default", cfg.AccessTokenTTL)
+	}
+}
+
+func TestMusicDirIsAlwaysALibraryRoot(t *testing.T) {
+	t.Setenv("ATTIC_JWT_SECRET", testSecret)
+	t.Setenv("ATTIC_LIBRARY_ROOTS", "/mnt/photos")
+	t.Setenv("ATTIC_MUSIC_DIR", "/mnt/music")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	// Media handlers refuse to serve anything outside a library root, so a
+	// music directory that is not one would scan but never play.
+	var found bool
+	for _, root := range cfg.LibraryRoots {
+		if root == "/mnt/music" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("LibraryRoots = %v, want it to contain the music dir", cfg.LibraryRoots)
+	}
+}
+
+func TestCoversDirFollowsDerivedDir(t *testing.T) {
+	t.Setenv("ATTIC_JWT_SECRET", testSecret)
+	t.Setenv("ATTIC_DERIVED_DIR", "/cache")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.CoversDir != "/cache/covers" {
+		t.Errorf("CoversDir = %q, want /cache/covers", cfg.CoversDir)
 	}
 }

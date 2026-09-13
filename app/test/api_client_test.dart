@@ -1,4 +1,5 @@
 import 'package:attic/core/api/api_client.dart';
+import 'package:attic/core/api/api_error.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 

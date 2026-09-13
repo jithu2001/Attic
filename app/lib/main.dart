@@ -5,9 +5,26 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/router/app_router.dart';
 import 'core/settings/settings_controller.dart';
 import 'core/theme/app_theme.dart';
+import 'features/auth/auth_controller.dart';
+import 'features/music/player/audio_handler.dart';
+import 'features/music/player/player_controller.dart';
 
-void main() {
-  runApp(const ProviderScope(child: AtticApp()));
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // The background audio service has to exist before anything can play, and it
+  // outlives the widget tree — that is what keeps music going when the app is
+  // backgrounded and the screen is locked.
+  final audioHandler = await initAudioService();
+
+  runApp(
+    ProviderScope(
+      overrides: <Override>[
+        audioHandlerProvider.overrideWithValue(audioHandler),
+      ],
+      child: const AtticApp(),
+    ),
+  );
 }
 
 /// Root of the Attic app.
@@ -23,9 +40,16 @@ class AtticApp extends ConsumerStatefulWidget {
 }
 
 class _AtticAppState extends ConsumerState<AtticApp> {
-  // The router is created once: rebuilding it would reset navigation state
-  // every time the theme changes.
-  late final _router = createRouter();
+
+  @override
+  void initState() {
+    super.initState();
+    // Restore a saved session before the first frame settles, so a returning
+    // user lands in their library rather than on the login screen.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(authControllerProvider.notifier).restore();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,7 +63,9 @@ class _AtticAppState extends ConsumerState<AtticApp> {
           theme: AppTheme.light(lightDynamic?.harmonized()),
           darkTheme: AppTheme.dark(darkDynamic?.harmonized()),
           themeMode: settings.themeMode,
-          routerConfig: _router,
+          // Read, not watched: rebuilding the router would reset navigation
+          // state every time the theme changes.
+          routerConfig: ref.read(routerProvider),
         );
       },
     );

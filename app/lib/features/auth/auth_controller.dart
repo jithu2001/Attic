@@ -1,9 +1,16 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/api/api_client.dart';
+import '../../core/api/api_error.dart';
+import '../../core/auth/auth_repository.dart';
+import '../../core/providers.dart';
+import 'device_name.dart';
 
 /// Where the user is in the connect-then-sign-in flow.
 enum AuthStage {
+  /// Still restoring a saved session.
+  restoring,
+
   /// No server address recorded yet.
   needsServer,
 
@@ -14,94 +21,147 @@ enum AuthStage {
   authenticated,
 }
 
+@immutable
 class AuthState {
   const AuthState({
-    this.stage = AuthStage.needsServer,
+    this.stage = AuthStage.restoring,
     this.serverUrl,
-    this.username,
+    this.account,
     this.busy = false,
-    this.error,
   });
 
   final AuthStage stage;
   final String? serverUrl;
-  final String? username;
+  final Account? account;
+
+  /// True while a connect or sign-in request is in flight, so the button can
+  /// show a spinner and refuse a second tap.
   final bool busy;
-  final String? error;
 
   AuthState copyWith({
     AuthStage? stage,
     String? serverUrl,
-    String? username,
+    Account? account,
     bool? busy,
-    String? error,
-    bool clearError = false,
+    bool clearAccount = false,
   }) {
     return AuthState(
       stage: stage ?? this.stage,
       serverUrl: serverUrl ?? this.serverUrl,
-      username: username ?? this.username,
+      account: clearAccount ? null : (account ?? this.account),
       busy: busy ?? this.busy,
-      error: clearError ? null : (error ?? this.error),
     );
   }
 }
 
-/// Drives the connect + sign-in flow.
+/// Drives connect, sign-in and sign-out.
 ///
-/// This is the skeleton: [connect] really does reach the server's `/ping` to
-/// validate the address, but [signIn] is a stub until the auth phase ships
-/// tokens. The whole flow is gated behind `Flags.auth`, so nothing here is
-/// reachable in a default build.
+/// Errors are thrown rather than parked in the state: the screens show them as
+/// SnackBars, and a stale error message surviving in state is worse than none.
 class AuthController extends StateNotifier<AuthState> {
-  AuthController(this._api) : super(const AuthState());
+  AuthController(this._auth) : super(const AuthState()) {
+    _auth.onSessionLost = _handleSessionLost;
+  }
 
-  final ApiClient _api;
+  final AuthRepository _auth;
 
-  /// Verify that [address] speaks Attic, and remember it.
-  Future<bool> connect(String address) async {
-    if (address.trim().isEmpty) {
-      state = state.copyWith(error: 'Enter your server address.');
-      return false;
+  /// Restores a saved session, if there is one. Called once at startup.
+  Future<void> restore() async {
+    final session = await _auth.restore();
+    if (session == null) {
+      state = state.copyWith(
+        stage: _auth.serverUrl == null ? AuthStage.needsServer : AuthStage.needsLogin,
+        serverUrl: _auth.serverUrl,
+      );
+      return;
     }
 
-    state = state.copyWith(busy: true, clearError: true);
-    _api.baseUrl = address;
+    // The stored tokens might be stale; /me settles it, refreshing on the way
+    // if the access token has simply expired.
     try {
-      await _api.getJson('/ping');
+      final account = await _auth.me();
       state = state.copyWith(
-        busy: false,
-        stage: AuthStage.needsLogin,
-        serverUrl: _api.baseUrl,
+        stage: AuthStage.authenticated,
+        serverUrl: session.serverUrl,
+        account: account,
       );
-      return true;
     } on ApiError catch (e) {
-      state = state.copyWith(busy: false, error: e.message);
-      return false;
-    } catch (_) {
-      state = state.copyWith(
-        busy: false,
-        error: 'Could not reach that server. Check the address and that you '
-            'are on the tailnet.',
-      );
-      return false;
+      // A network failure must not throw away a good session: the user may
+      // just be off the tailnet. Only an actual rejection signs them out.
+      if (e.isUnauthorized) {
+        await _auth.signOut();
+        state = state.copyWith(
+          stage: AuthStage.needsLogin,
+          serverUrl: session.serverUrl,
+          clearAccount: true,
+        );
+      } else {
+        state = state.copyWith(
+          stage: AuthStage.authenticated,
+          serverUrl: session.serverUrl,
+        );
+      }
     }
   }
 
-  /// Stub: the auth phase replaces this with a real token exchange, refresh
-  /// token storage in flutter_secure_storage, and a dio auth interceptor.
-  Future<bool> signIn({required String username, required String password}) async {
+  /// Verifies a server address and moves on to sign-in.
+  Future<void> connect(String address) async {
+    state = state.copyWith(busy: true);
+    try {
+      await _auth.connect(address);
+      state = state.copyWith(
+        stage: AuthStage.needsLogin,
+        serverUrl: _auth.serverUrl,
+        busy: false,
+      );
+    } catch (_) {
+      state = state.copyWith(busy: false);
+      rethrow;
+    }
+  }
+
+  /// Signs in and fetches the media token playback needs.
+  Future<void> signIn({required String username, required String password}) async {
+    state = state.copyWith(busy: true);
+    try {
+      final account = await _auth.signIn(
+        username: username,
+        password: password,
+        deviceName: await describeDevice(),
+      );
+      await _auth.ensureMediaToken(force: true);
+      state = state.copyWith(
+        stage: AuthStage.authenticated,
+        account: account,
+        busy: false,
+      );
+    } catch (_) {
+      state = state.copyWith(busy: false);
+      rethrow;
+    }
+  }
+
+  /// Revokes this device and returns to the login screen.
+  Future<void> signOut() async {
+    await _auth.signOut();
     state = state.copyWith(
-      busy: false,
-      error: 'Sign-in arrives with the authentication phase.',
+      stage: AuthStage.needsLogin,
+      clearAccount: true,
     );
-    return false;
+  }
+
+  /// Forgets the server too, so a different one can be entered.
+  void changeServer() {
+    state = state.copyWith(stage: AuthStage.needsServer);
+  }
+
+  void _handleSessionLost() {
+    if (!mounted) return;
+    state = state.copyWith(stage: AuthStage.needsLogin, clearAccount: true);
   }
 }
-
-final apiClientProvider = Provider<ApiClient>((ref) => ApiClient());
 
 final authControllerProvider =
     StateNotifierProvider<AuthController, AuthState>((ref) {
-  return AuthController(ref.watch(apiClientProvider));
+  return AuthController(ref.watch(authRepositoryProvider));
 });

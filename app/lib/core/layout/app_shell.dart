@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../features/music/player/mini_player.dart';
 import 'destinations.dart';
 import 'window_size.dart';
 
@@ -27,17 +28,25 @@ class AppShell extends StatelessWidget {
     if (sizeClass.isCompact) {
       return Scaffold(
         body: SafeArea(child: child),
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: selectedIndex,
-          onDestinationSelected: onDestinationSelected,
-          destinations: <Widget>[
-            for (final d in kDestinations)
-              NavigationDestination(
-                icon: Icon(d.icon),
-                selectedIcon: Icon(d.selectedIcon),
-                label: d.label,
-                tooltip: d.label,
-              ),
+        // The mini-player is docked between the content and the navigation
+        // bar, so it survives switching destinations and never covers one.
+        bottomNavigationBar: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const MiniPlayer(),
+            NavigationBar(
+              selectedIndex: selectedIndex,
+              onDestinationSelected: onDestinationSelected,
+              destinations: <Widget>[
+                for (final d in kDestinations)
+                  NavigationDestination(
+                    icon: Icon(d.icon),
+                    selectedIcon: Icon(d.selectedIcon),
+                    label: d.label,
+                    tooltip: d.label,
+                  ),
+              ],
+            ),
           ],
         ),
       );
@@ -65,7 +74,14 @@ class AppShell extends StatelessWidget {
               ],
             ),
             const VerticalDivider(width: 1, thickness: 1),
-            Expanded(child: child),
+            Expanded(
+              child: Column(
+                children: <Widget>[
+                  Expanded(child: child),
+                  const MiniPlayer(),
+                ],
+              ),
+            ),
           ],
         ),
       ),

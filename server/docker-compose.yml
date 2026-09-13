@@ -22,13 +22,17 @@ services:
       ATTIC_LISTEN_ADDR: ":8080"
       ATTIC_DATABASE_URL: "postgres://attic:${POSTGRES_PASSWORD:-attic}@postgres:5432/attic?sslmode=disable"
       ATTIC_DATA_DIR: "/data"
-      ATTIC_LIBRARY_ROOTS: "${ATTIC_LIBRARY_ROOTS:-/data/originals}"
+      ATTIC_MUSIC_DIR: "/data/music"
+      ATTIC_LIBRARY_ROOTS: "${ATTIC_LIBRARY_ROOTS:-/data/originals,/data/music}"
       ATTIC_JWT_SECRET: "${ATTIC_JWT_SECRET:?set ATTIC_JWT_SECRET in .env (32+ bytes)}"
       ATTIC_LOG_LEVEL: "${ATTIC_LOG_LEVEL:-info}"
       ATTIC_LOG_FORMAT: "json"
     volumes:
       - originals:/data/originals
       - derived:/data/derived
+      # Your existing music library, mounted read-only: Attic never writes to
+      # it, and scanning is the only thing that reads it.
+      - ${ATTIC_MUSIC_HOST_DIR:-./music}:/data/music:ro
     devices:
       # Intel QSV / VAAPI hardware transcoding. Comment out on hosts without
       # an Intel iGPU; FFmpeg falls back to software encoding.

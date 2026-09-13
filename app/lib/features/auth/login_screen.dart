@@ -1,14 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
+import '../../core/api/api_error.dart';
 import '../../core/layout/window_size.dart';
 import 'auth_controller.dart';
 
 /// Step two of onboarding: sign in to the connected server.
-///
-/// The form is real; the token exchange behind [AuthController.signIn] lands in
-/// the authentication phase. Gated behind `Flags.auth`.
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -29,19 +26,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _submit() async {
-    final ok = await ref.read(authControllerProvider.notifier).signIn(
-          username: _username.text,
-          password: _password.text,
-        );
-    if (!mounted) return;
-    if (ok) {
-      context.go('/photos');
-    } else {
-      final message = ref.read(authControllerProvider).error;
-      if (message != null) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(message)));
-      }
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref.read(authControllerProvider.notifier).signIn(
+            username: _username.text,
+            password: _password.text,
+          );
+    } on ApiError catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
     }
   }
 
@@ -53,10 +45,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final margin = WindowSizeClass.of(context).screenMargin;
 
     return Scaffold(
-      appBar: AppBar(
-        leading: BackButton(onPressed: () => context.go('/connect')),
-        title: const Text('Sign in'),
-      ),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -67,6 +55,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
+                  Text('Sign in', style: text.headlineSmall, textAlign: TextAlign.center),
+                  const SizedBox(height: 8),
                   if (auth.serverUrl != null)
                     Text(
                       auth.serverUrl!,
@@ -78,6 +68,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     controller: _username,
                     autofocus: true,
                     autocorrect: false,
+                    enableSuggestions: false,
                     textInputAction: TextInputAction.next,
                     decoration: const InputDecoration(
                       labelText: 'Username',
@@ -114,6 +105,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Text('Sign in'),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: auth.busy
+                        ? null
+                        : () => ref.read(authControllerProvider.notifier).changeServer(),
+                    child: const Text('Use a different server'),
                   ),
                 ],
               ),

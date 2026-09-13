@@ -7,7 +7,8 @@ APP_DIR    := app
 COMPOSE    := docker compose -f $(SERVER_DIR)/docker-compose.yml --env-file $(SERVER_DIR)/.env
 
 .DEFAULT_GOAL := help
-.PHONY: help up down logs ps server-build server-run server-test server-fmt server-lint \
+.PHONY: help up down logs ps adduser server-build server-run server-test \
+        server-test-integration server-fmt server-lint \
         app-get app-test app-analyze app-run test fmt
 
 help: ## Show this help
@@ -43,6 +44,15 @@ server-run: ## Run the server locally (needs a reachable Postgres)
 
 server-test: ## Run Go tests with the race detector
 	cd $(SERVER_DIR) && go test -race ./...
+
+server-test-integration: ## Run Go tests including the ones that need Postgres
+	@test -n "$$ATTIC_TEST_DATABASE_URL" || { \
+	  echo "Set ATTIC_TEST_DATABASE_URL to a database the tests may wipe." >&2; exit 1; }
+	cd $(SERVER_DIR) && go test -race ./...
+
+adduser: ## Create an account (usage: make adduser USER=ada)
+	@test -n "$(USER)" || { echo "Usage: make adduser USER=<username>" >&2; exit 1; }
+	$(COMPOSE) exec app attic adduser $(USER)
 
 server-fmt: ## Format Go code
 	cd $(SERVER_DIR) && gofmt -w .

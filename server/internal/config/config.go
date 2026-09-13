@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/perleybrook/attic/server/internal/auth"
 )
 
 // Config is the fully resolved server configuration.
@@ -32,10 +34,29 @@ type Config struct {
 	// outside them can ever be served.
 	LibraryRoots []string
 
+	// MusicDir is the library root the music scanner walks. It is always
+	// included in LibraryRoots.
+	MusicDir string
+
+	// CoversDir holds cover art extracted from audio tags, named by content
+	// hash. Regenerable: it lives under DerivedDir.
+	CoversDir string
+
+	// ScanInterval is how often the periodic music scan runs.
+	ScanInterval time.Duration
+
+	// ScanDebounce is how long the filesystem watcher waits for writes to
+	// settle before enqueuing a scan of a changed directory.
+	ScanDebounce time.Duration
+
 	// Auth
 	JWTSecret       []byte
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
+
+	// MediaTokenTTL bounds the signed `?token=` URLs handed to the audio and
+	// video players, which cannot refresh a bearer header mid-stream.
+	MediaTokenTTL time.Duration
 
 	// External tools
 	FFmpegPath  string
@@ -49,17 +70,24 @@ type Config struct {
 // Load reads configuration from the environment and validates it.
 func Load() (*Config, error) {
 	dataDir := env("ATTIC_DATA_DIR", "/data")
+	derivedDir := env("ATTIC_DERIVED_DIR", dataDir+"/derived")
+	musicDir := env("ATTIC_MUSIC_DIR", dataDir+"/music")
 
 	c := &Config{
 		ListenAddr:      env("ATTIC_LISTEN_ADDR", ":8080"),
 		DatabaseURL:     env("ATTIC_DATABASE_URL", "postgres://attic:attic@localhost:5432/attic?sslmode=disable"),
 		DataDir:         dataDir,
 		OriginalsDir:    env("ATTIC_ORIGINALS_DIR", dataDir+"/originals"),
-		DerivedDir:      env("ATTIC_DERIVED_DIR", dataDir+"/derived"),
-		LibraryRoots:    envList("ATTIC_LIBRARY_ROOTS", []string{dataDir + "/originals"}),
+		DerivedDir:      derivedDir,
+		MusicDir:        musicDir,
+		CoversDir:       env("ATTIC_COVERS_DIR", derivedDir+"/covers"),
+		ScanInterval:    envDuration("ATTIC_SCAN_INTERVAL", time.Hour),
+		ScanDebounce:    envDuration("ATTIC_SCAN_DEBOUNCE", 30*time.Second),
+		LibraryRoots:    envList("ATTIC_LIBRARY_ROOTS", []string{dataDir + "/originals", musicDir}),
 		JWTSecret:       []byte(env("ATTIC_JWT_SECRET", "")),
 		AccessTokenTTL:  envDuration("ATTIC_ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL: envDuration("ATTIC_REFRESH_TOKEN_TTL", 90*24*time.Hour),
+		MediaTokenTTL:   envDuration("ATTIC_MEDIA_TOKEN_TTL", 6*time.Hour),
 		FFmpegPath:      env("ATTIC_FFMPEG_PATH", "ffmpeg"),
 		FFprobePath:     env("ATTIC_FFPROBE_PATH", "ffprobe"),
 		LogLevel:        envLevel("ATTIC_LOG_LEVEL", slog.LevelInfo),
@@ -88,10 +116,32 @@ func (c *Config) validate() error {
 	if len(c.LibraryRoots) == 0 {
 		return fmt.Errorf("config: ATTIC_LIBRARY_ROOTS must list at least one directory")
 	}
-	if c.AccessTokenTTL <= 0 || c.RefreshTokenTTL <= 0 {
+	if c.AccessTokenTTL <= 0 || c.RefreshTokenTTL <= 0 || c.MediaTokenTTL <= 0 {
 		return fmt.Errorf("config: token TTLs must be positive")
 	}
+	if c.MusicDir == "" {
+		return fmt.Errorf("config: ATTIC_MUSIC_DIR must not be empty")
+	}
+	// The music scanner reads through the same guard as every media handler,
+	// so its directory has to be a library root.
+	if !c.isLibraryRoot(c.MusicDir) {
+		c.LibraryRoots = append(c.LibraryRoots, c.MusicDir)
+	}
 	return nil
+}
+
+func (c *Config) isLibraryRoot(dir string) bool {
+	for _, root := range c.LibraryRoots {
+		if root == dir {
+			return true
+		}
+	}
+	return false
+}
+
+// NewTokens builds the token issuer this configuration describes.
+func (c *Config) NewTokens() *auth.Tokens {
+	return auth.NewTokens(c.JWTSecret, c.AccessTokenTTL, c.RefreshTokenTTL, c.MediaTokenTTL)
 }
 
 // Logger builds the slog logger described by the configuration.
