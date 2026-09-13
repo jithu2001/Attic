@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Attic servers are reached over a Tailscale network, never the public
+  internet. Inside a tailnet, plain HTTP is a supported deployment: the traffic
+  is already encrypted and authenticated by WireGuard, and obtaining a
+  certificate requires an extra step (`tailscale cert`) that a home server may
+  not have taken.
+
+  Android blocks cleartext by default, which would make those servers
+  unreachable, so it is permitted here. HTTPS is still used whenever the user
+  enters an https address, and the app upgrades a bare hostname to https before
+  it ever tries http.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system"/>
+            <!-- Lets someone add their tailnet CA to the device and have Attic
+                 trust it, without the app shipping its own trust store. -->
+            <certificates src="user"/>
+        </trust-anchors>
+    </base-config>
+</network-security-config>

@@ -128,6 +128,36 @@ finishes its feature; anything unfinished stays off.
 | `ATTIC_VIDEO` | Movies and series | Off — M3 empty state, "Coming soon" |
 | `ATTIC_BACKGROUND_SYNC` | Camera-roll backup | Off — not started |
 
+## Verified on a real device
+
+Tested end to end on a Galaxy S20 FE (Android 13) against the running server,
+with a generated library of real MP3 and FLAC files:
+
+- Connect by address → sign in → browse artists → albums → album detail → play.
+- **MP3 and FLAC both play.** Album art extracted from the files renders in the
+  grid, the album header, the mini-player and the lock screen.
+- **Playback survives backgrounding and a locked, dozing screen**: a 7-minute
+  track ran from 0:03 to past 2:13 with the app in the background and the
+  screen off.
+- **Lock-screen controls work**, with artwork, title, artist and a live
+  scrubber. Media buttons (the path a headset uses) pause, resume and skip.
+- A media-playback foreground service and a transport-category notification are
+  posted on Android 13.
+- The filesystem watcher picked up a newly copied album within the debounce
+  window while the app was running; it appeared on the next browse.
+- Recreating the database invalidated the stored session: the app tried `/me`,
+  got 401, refreshed, got 401, signed out and returned to the login screen with
+  the server address remembered.
+- ExoPlayer issued a real range request
+  (`bytes=3214-` → `206 bytes 3214-484075/484076`).
+- Zero server-side errors across the whole session.
+
+Not verified on-device: **audio-focus interruption** (another app taking focus)
+— it is configured through audio_session and just_audio's interruption
+handling, but was not exercised against a second audio app. Seeking far enough
+ahead to force a fresh range request was also not driven from the UI; the 206
+behaviour is covered by tests and by the curl run below.
+
 ## How it was verified
 
 The server was run for real against Postgres with a generated library, not just
@@ -165,8 +195,9 @@ unit-tested:
   only a gap when running the binary on a host without it — the library still
   scans and plays, but `duration_s` is null and the scrubber falls back to the
   decoder's own duration once playback starts. The local end-to-end run above
-  had no FFmpeg, so the transcode path (`?transcode=opus128`) is implemented
-  and unit-covered but has **not** been exercised against a real encoder.
+  device test above ran with a real FFmpeg and durations were read correctly.
+  The transcode path (`?transcode=opus128`) is implemented and unit-covered but
+  has **not** been exercised against a real encoder.
 - **Artist and album ids are derived, not stored** (URL-safe base64 of the
   album-artist name, and of the artist + album pair). Artists and albums have
   no rows of their own, exactly as the schema describes, and derived ids stay
@@ -183,10 +214,26 @@ unit-tested:
 - **Integration tests were run against Postgres 18** (what is installed
   locally); production compose runs postgres:16. Nothing in the schema is
   version-specific.
+- **FLAC track and disc numbers needed a fix.** dhowden/tag reads only the
+  canonical `tracknumber` field and parses it with `Atoi`, so the very common
+  `TRACKNUMBER=3/12` form — and ffmpeg's non-canonical `track` key — both came
+  back as zero and the album silently sorted by title. The scanner now falls
+  back to the raw tags and accepts the "of total" form. Found on the phone,
+  fixed, and covered by a table-driven test.
+- **Android permits cleartext HTTP** via a network security config. The brief
+  supports plain HTTP inside a tailnet, and Android blocks it by default, which
+  would make those servers unreachable. HTTPS is still used whenever the
+  address has a scheme, and a bare hostname is upgraded to https first.
+- **The media notification needs `POST_NOTIFICATIONS` on Android 13+.** The
+  permission is declared, but the app never *asks* for it at runtime, so on a
+  fresh install the lock-screen controls will not appear until the user grants
+  notifications by hand. Requesting it needs a package outside the fixed stack
+  (`permission_handler`), so it is left for a decision rather than added
+  silently.
 - **The library has been tested with ~14 tracks, not ≥1k.** The scan path is
   per-directory and bounded, and the diff avoids re-hashing unchanged files, but
-  the ≥1k-track and real-FLAC playback checks in the phase brief need real
-  hardware and a real library to confirm.
+  the ≥1k-track check in the phase brief needs a real library to confirm.
+  (Real-FLAC and real-MP3 playback *were* confirmed on the device above.)
 - Caddy expects `server/certs/attic.crt` and `attic.key` from `tailscale cert`;
   `make up` does not create them.
 - No CI yet.

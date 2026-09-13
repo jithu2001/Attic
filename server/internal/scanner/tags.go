@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/dhowden/tag"
@@ -63,10 +64,23 @@ func (s *Scanner) readTags(path string) (trackTags, error) {
 		tags.Album = "Unknown Album"
 	}
 
-	if trackNo, _ := meta.Track(); trackNo > 0 {
+	// The typed accessors first, then the raw tags. dhowden reads only the
+	// canonical Vorbis field names and parses them with Atoi, so a FLAC whose
+	// numbers are written as "3/12" — or under ffmpeg's "track" instead of
+	// "tracknumber" — comes back as zero and the album silently sorts by title.
+	trackNo, _ := meta.Track()
+	if trackNo <= 0 {
+		trackNo = numberFromRaw(meta.Raw(), "tracknumber", "track", "TRACKNUMBER", "TRACK")
+	}
+	if trackNo > 0 {
 		tags.TrackNo = &trackNo
 	}
-	if discNo, _ := meta.Disc(); discNo > 0 {
+
+	discNo, _ := meta.Disc()
+	if discNo <= 0 {
+		discNo = numberFromRaw(meta.Raw(), "discnumber", "disc", "DISCNUMBER", "DISC")
+	}
+	if discNo > 0 {
 		tags.DiscNo = &discNo
 	}
 	if year := meta.Year(); year > 0 {
@@ -89,6 +103,43 @@ func (s *Scanner) readTags(path string) (trackTags, error) {
 	}
 
 	return tags, nil
+}
+
+// numberFromRaw pulls the first parsable track or disc number out of the raw
+// tags, accepting both a bare "3" and the "3/12" of-total form.
+func numberFromRaw(raw map[string]interface{}, keys ...string) int {
+	for _, key := range keys {
+		value, ok := raw[key]
+		if !ok {
+			continue
+		}
+
+		switch v := value.(type) {
+		case int:
+			if v > 0 {
+				return v
+			}
+		case string:
+			if n := parseLeadingNumber(v); n > 0 {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+// parseLeadingNumber reads the number at the start of s, stopping at the "/"
+// that separates it from the total.
+func parseLeadingNumber(s string) int {
+	s = strings.TrimSpace(s)
+	if before, _, found := strings.Cut(s, "/"); found {
+		s = strings.TrimSpace(before)
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
 }
 
 // musicBrainzID digs the recording id out of the format-specific raw tags.
