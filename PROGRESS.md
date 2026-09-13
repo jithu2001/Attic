@@ -110,6 +110,22 @@ delete with a confirmation dialog.
 info, read-only device list with relative "last seen", sign out behind a
 confirmation dialog.
 
+**Notification permission.** On Android 13+ the media notification — where the
+lock-screen and headset controls live — needs a runtime permission. Attic asks
+for it at the first moment it means anything, when playback starts, not on
+first launch; it asks at most once per run however many tracks are queued; and
+a refusal only costs the controls, never playback. Settings shows a card
+explaining what is missing, with "Allow notifications" or, once the system has
+stopped prompting, "Open settings"; the card and its section heading disappear
+together the moment permission is granted, and re-check on resume so a change
+made in system settings is picked up.
+
+The awkward part is that Android reports "refused, ask me again" and "refused,
+stop asking" identically. Attic resolves the two after a refusal rather than
+guessing, because guessing wrong leaves an "Allow" button that silently does
+nothing — which is exactly what happened on the test device before it was
+fixed.
+
 **Platform.** Android declares the media-playback foreground service, the media
 button receiver and `MainActivity : AudioServiceActivity`; iOS declares the
 `audio` background mode. The Android manifest also covers TV (leanback,
@@ -151,6 +167,11 @@ with a generated library of real MP3 and FLAC files:
 - ExoPlayer issued a real range request
   (`bytes=3214-` → `206 bytes 3214-484075/484076`).
 - Zero server-side errors across the whole session.
+
+The notification permission flow was then exercised on the same device: the
+system prompt appears on the first play (naming the app), refusing it flips the
+card to "Open settings" which opens the real system page, and granting from
+outside the app makes the card and its heading vanish on resume.
 
 Not verified on-device: **audio-focus interruption** (another app taking focus)
 — it is configured through audio_session and just_audio's interruption
@@ -224,12 +245,9 @@ unit-tested:
   supports plain HTTP inside a tailnet, and Android blocks it by default, which
   would make those servers unreachable. HTTPS is still used whenever the
   address has a scheme, and a bare hostname is upgraded to https first.
-- **The media notification needs `POST_NOTIFICATIONS` on Android 13+.** The
-  permission is declared, but the app never *asks* for it at runtime, so on a
-  fresh install the lock-screen controls will not appear until the user grants
-  notifications by hand. Requesting it needs a package outside the fixed stack
-  (`permission_handler`), so it is left for a decision rather than added
-  silently.
+- **`permission_handler` was added to the fixed stack**, with approval, to
+  request `POST_NOTIFICATIONS` on Android 13+. Without it the lock-screen
+  controls silently never appear on a fresh install.
 - **The library has been tested with ~14 tracks, not ≥1k.** The scan path is
   per-directory and bounded, and the diff avoids re-hashing unchanged files, but
   the ≥1k-track check in the phase brief needs a real library to confirm.

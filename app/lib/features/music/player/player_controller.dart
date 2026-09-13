@@ -2,6 +2,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/auth/auth_repository.dart';
+import '../../../core/permissions/notification_permission.dart';
 import '../../../core/providers.dart';
 import '../data/models.dart';
 import 'audio_handler.dart';
@@ -19,16 +20,28 @@ final audioHandlerProvider = Provider<AudioHandler>((ref) {
 /// item is what the lock screen renders: get it wrong and the notification
 /// shows the wrong song while the right one plays.
 class PlayerController {
-  PlayerController({required AudioHandler handler, required AuthRepository auth})
-      : _handler = handler,
-        _auth = auth;
+  PlayerController({
+    required AudioHandler handler,
+    required AuthRepository auth,
+    required NotificationPermissionController notifications,
+  })  : _handler = handler,
+        _auth = auth,
+        _notifications = notifications;
 
   final AudioHandler _handler;
   final AuthRepository _auth;
+  final NotificationPermissionController _notifications;
 
   /// Plays [tracks] starting at [index].
   Future<void> playQueue(List<Track> tracks, {int index = 0}) async {
     if (tracks.isEmpty) return;
+
+    // Ask for notification permission here, at the first moment it means
+    // anything: on Android 13+ the media notification is where the
+    // lock-screen and headset controls live. A refusal only costs those
+    // controls, so it must never stop playback.
+    await _notifications.ensure();
+
     // Playback URLs carry a media token, so refresh it before building a queue
     // rather than discovering it expired three tracks in.
     await _auth.ensureMediaToken();
@@ -92,6 +105,7 @@ final playerControllerProvider = Provider<PlayerController>((ref) {
   return PlayerController(
     handler: ref.watch(audioHandlerProvider),
     auth: ref.watch(authRepositoryProvider),
+    notifications: ref.watch(notificationPermissionProvider.notifier),
   );
 });
 

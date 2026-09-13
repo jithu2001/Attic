@@ -28,6 +28,9 @@ dependencies:
   audio_session: ^0.1.19
   rxdart: ^0.28.0
 
+  # Runtime permissions (Android 13+ notifications for the media controls)
+  permission_handler: ^11.3.1
+
   # Storage
   flutter_secure_storage: ^9.2.2
   shared_preferences: ^2.2.3
